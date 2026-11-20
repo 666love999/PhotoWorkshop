@@ -1,0 +1,20 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/app/build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.kotlin/
+
+# 本机的开发记录（含本机路径、设备信息），不随仓库分发
+.workbuddy/
+
+# 编译产物与安装包
+*.apk
+*.aab
+/dist/
