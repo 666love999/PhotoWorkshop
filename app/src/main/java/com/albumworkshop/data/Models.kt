@@ -1,6 +1,9 @@
 package com.albumworkshop.data
 
 import android.net.Uri
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 一条媒体记录（图片或视频），字段全部来自 MediaStore。
@@ -44,16 +47,30 @@ data class MediaItem(
      * 用 Double 而不是 Float 计算——视频动辄几个 G，Float 只有 7 位有效数字，
      * 换算时会把 2.4 GB 显示成 2.3 GB 这种误差。
      */
-    fun displaySize(): String {
-        if (size <= 0L) return "0 KB"
-        val kb = size / 1024.0
-        val mb = kb / 1024.0
-        val gb = mb / 1024.0
-        return when {
-            gb >= 1.0 -> String.format("%.2f GB", gb)
-            mb >= 1.0 -> String.format("%.1f MB", mb)
-            else -> String.format("%.0f KB", kb)
+    fun displaySize(): String = formatFileSize(size)
+
+    /**
+     * 修改时间，形如「11-19 21:30」。MediaStore 的 DATE_MODIFIED 是秒。
+     */
+    val modifiedText: String
+        get() {
+            if (dateModified <= 0L) return ""
+            return runCatching {
+                SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(dateModified * 1000L))
+            }.getOrDefault("")
         }
+}
+
+/** 文件大小的统一格式化，供单个文件和合计体积共用 */
+fun formatFileSize(size: Long): String {
+    if (size <= 0L) return "0 KB"
+    val kb = size / 1024.0
+    val mb = kb / 1024.0
+    val gb = mb / 1024.0
+    return when {
+        gb >= 1.0 -> String.format("%.2f GB", gb)
+        mb >= 1.0 -> String.format("%.1f MB", mb)
+        else -> String.format("%.0f KB", kb)
     }
 }
 

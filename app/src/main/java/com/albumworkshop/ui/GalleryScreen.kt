@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,8 +62,16 @@ fun GalleryScreen(
     onLongPressAlbum: (Album) -> Unit,
     onOpenItem: (Int) -> Unit,
     onLongPressItem: (MediaItem) -> Unit,
+    onToggleItem: (MediaItem) -> Unit,
     onRefresh: () -> Unit,
 ) {
+    // 处于「文件多选」模式时，单击缩略图变成切换选中，而不是进预览
+    val itemSelection = state.selection as? Selection.ItemSelection
+    val selecting = itemSelection != null
+    val selectedIds = remember(itemSelection) {
+        itemSelection?.items?.mapTo(HashSet()) { it.id } ?: emptySet()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -122,8 +131,11 @@ fun GalleryScreen(
                     } else {
                         VideoGrid(
                             videos = state.videos,
+                            selecting = selecting,
+                            selectedIds = selectedIds,
                             onOpen = onOpenItem,
                             onLongPress = onLongPressItem,
+                            onToggle = onToggleItem,
                         )
                     }
                 }
@@ -139,8 +151,11 @@ fun GalleryScreen(
                     } else {
                         AllMediaGrid(
                             items = state.allMedia,
+                            selecting = selecting,
+                            selectedIds = selectedIds,
                             onOpen = onOpenItem,
                             onLongPress = onLongPressItem,
+                            onToggle = onToggleItem,
                         )
                     }
                 }
@@ -300,13 +315,16 @@ private fun AlbumGrid(
 @Composable
 private fun AllMediaGrid(
     items: List<MediaItem>,
+    selecting: Boolean,
+    selectedIds: Set<Long>,
     onOpen: (Int) -> Unit,
     onLongPress: (MediaItem) -> Unit,
+    onToggle: (MediaItem) -> Unit,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(3),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 12.dp, bottom = 160.dp),
+        contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 12.dp, bottom = 220.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -318,7 +336,8 @@ private fun AllMediaGrid(
                     .aspectRatio(1f),
                 corner = 10.dp,
                 showDuration = item.isVideo,
-                onClick = { onOpen(index) },
+                selected = selecting && item.id in selectedIds,
+                onClick = { if (selecting) onToggle(item) else onOpen(index) },
                 onLongClick = { onLongPress(item) },
             )
         }
@@ -329,13 +348,16 @@ private fun AllMediaGrid(
 @Composable
 private fun VideoGrid(
     videos: List<MediaItem>,
+    selecting: Boolean,
+    selectedIds: Set<Long>,
     onOpen: (Int) -> Unit,
     onLongPress: (MediaItem) -> Unit,
+    onToggle: (MediaItem) -> Unit,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(3),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 160.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 220.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -347,7 +369,8 @@ private fun VideoGrid(
                     .aspectRatio(1f),
                 corner = 12.dp,
                 showDuration = true,
-                onClick = { onOpen(index) },
+                selected = selecting && video.id in selectedIds,
+                onClick = { if (selecting) onToggle(video) else onOpen(index) },
                 onLongClick = { onLongPress(video) },
             )
         }
@@ -360,9 +383,12 @@ fun AlbumScreen(
     album: Album,
     items: List<MediaItem>,
     loading: Boolean,
+    selecting: Boolean,
+    selectedIds: Set<Long>,
     onBack: () -> Unit,
     onOpenItem: (Int) -> Unit,
     onLongPressItem: (MediaItem) -> Unit,
+    onToggleItem: (MediaItem) -> Unit,
     onRefresh: () -> Unit,
 ) {
     Column(
@@ -410,7 +436,7 @@ fun AlbumScreen(
                 else -> LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 160.dp),
+                    contentPadding = PaddingValues(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 220.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -421,7 +447,8 @@ fun AlbumScreen(
                                 .fillMaxWidth()
                                 .aspectRatio(1f),
                             corner = 8.dp,
-                            onClick = { onOpenItem(index) },
+                            selected = selecting && image.id in selectedIds,
+                            onClick = { if (selecting) onToggleItem(image) else onOpenItem(index) },
                             onLongClick = { onLongPressItem(image) },
                         )
                     }

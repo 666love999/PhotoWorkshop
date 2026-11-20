@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -56,7 +57,7 @@ import kotlin.math.roundToInt
 fun ResizeSheet(
     targets: List<MediaItem>,
     onDismiss: () -> Unit,
-    onConfirm: (Int) -> Unit,
+    onConfirm: (Int, Boolean) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
@@ -72,6 +73,8 @@ fun ResizeSheet(
         mutableStateOf((originalSize.first / 2).coerceAtLeast(16).toString())
     }
     var userEdited by remember(first.uri) { mutableStateOf(false) }
+    // 默认保留原图，覆盖属于不可逆操作，要用户主动打开
+    var overwrite by remember(first.uri) { mutableStateOf(false) }
 
     LaunchedEffect(first.uri) {
         val real = runCatching { ImageResizer.displaySize(context, first) }.getOrNull()
@@ -172,7 +175,7 @@ fun ResizeSheet(
                 ),
                 keyboardActions = KeyboardActions(onDone = {
                     keyboard?.hide()
-                    if (isValid) onConfirm(targetWidth!!)
+                    if (isValid) onConfirm(targetWidth!!, overwrite)
                 }),
                 supportingText = if (isValid) {
                     null
@@ -199,6 +202,47 @@ fun ResizeSheet(
 
             Spacer(Modifier.height(18.dp))
 
+            // 覆盖原文件开关
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = if (overwrite) {
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 16.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "覆盖原文件",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = if (overwrite) {
+                                "直接改写原图，文件名不变，此操作无法恢复"
+                            } else {
+                                "关闭时生成新文件，原图保留不动"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (overwrite) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    Switch(checked = overwrite, onCheckedChange = { overwrite = it })
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
             Row(verticalAlignment = Alignment.Top) {
                 Icon(
                     imageVector = Icons.Rounded.Info,
@@ -208,7 +252,11 @@ fun ResizeSheet(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "新文件名加后缀 gai（如 ${first.baseName}gai${first.extension}），保存在原目录，原文件保留不动。",
+                    text = if (overwrite) {
+                        "将直接改写原图内容，文件名保持 ${first.displayName} 不变。目标宽度大于原图时按原尺寸输出，不会放大。"
+                    } else {
+                        "新文件名加后缀 gai（如 ${first.baseName}gai${first.extension}），保存在原目录，原文件保留不动。Download 等系统不允许写入的目录会存到 Pictures 下。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -219,7 +267,7 @@ fun ResizeSheet(
             Button(
                 onClick = {
                     keyboard?.hide()
-                    if (isValid) onConfirm(targetWidth!!)
+                    if (isValid) onConfirm(targetWidth!!, overwrite)
                 },
                 enabled = isValid,
                 modifier = Modifier

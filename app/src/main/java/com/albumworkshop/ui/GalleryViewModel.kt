@@ -99,6 +99,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         else -> emptyList()
     }
 
+    /** 供界面判断「是否已全选」 */
+    fun visibleItems(): List<MediaItem> = currentItems()
+
     // ------------------------------------------------------------ 长按选中
 
     fun longPressAlbum(album: Album) {
@@ -114,7 +117,47 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun longPressItem(item: MediaItem) {
-        state = state.copy(selection = Selection.ItemSelection(listOf(item)))
+        // 已经在多选模式里时，长按等同于切换，方便连续勾选
+        if (state.selection is Selection.ItemSelection) {
+            toggleItemSelection(item)
+        } else {
+            state = state.copy(selection = Selection.ItemSelection(listOf(item)))
+        }
+    }
+
+    /**
+     * 全屏预览里长按：退出预览并选中这个文件，让底部操作条接管。
+     * 预览是盖在最上层的，不退出的话操作条会被挡住。
+     */
+    fun longPressInViewer(item: MediaItem) {
+        state = state.copy(viewer = null, selection = Selection.ItemSelection(listOf(item)))
+    }
+
+    /**
+     * 选择模式下点缩略图：把该文件从选中集合里加进来或去掉。
+     * 全部取消时自动退出选择模式。
+     */
+    fun toggleItemSelection(item: MediaItem) {
+        val current = state.selection
+        if (current !is Selection.ItemSelection) {
+            state = state.copy(selection = Selection.ItemSelection(listOf(item)))
+            return
+        }
+        val remaining = if (current.items.any { it.id == item.id }) {
+            current.items.filterNot { it.id == item.id }
+        } else {
+            current.items + item
+        }
+        state = state.copy(
+            selection = if (remaining.isEmpty()) null else Selection.ItemSelection(remaining)
+        )
+    }
+
+    /** 全选当前列表（全部 / 视频 / 某个相册）里的所有文件 */
+    fun selectAllVisible() {
+        val items = currentItems()
+        if (items.isEmpty()) return
+        state = state.copy(selection = Selection.ItemSelection(items))
     }
 
     fun dismissSelection() {
@@ -145,41 +188,102 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     // ------------------------------------------------------------ 修改分辨率
 
-    fun executeResize(targetWidth: Int) {
+    fun executeResize(targetWidth: Int, overwrite: Boolean = false) {
         val sheet = state.sheet as? Sheet.Resize ?: return
         if (targetWidth <= 0) {
             notify("请输入合法的宽度")
             return
         }
-        val targets = sheet.items
+        val images = sheet.items.filter { !it.isVideo }
+        if (images.isEmpty()) {
+            notify("没有可处理的图片")
+            return
+        }
         state = state.copy(sheet = Sheet.None, selection = null)
-        viewModelScope.launch {
-            var success = 0
-            var failed = 0
-            targets.forEachIndexed { index, item ->
-                state = state.copy(busy = "正在修改分辨率 ${index + 1}/${targets.size}")
-                // 批量处理时不放大原图，避免小图被拉大
-                val width = if (targets.size > 1 && item.width > 0) {
-                    minOf(targetWidth, item.width)
-                } else {
-                    targetWidth
+
+        // 覆盖原文件要改写别人的媒体条目，Android 11+ 必须先拿到系统授权
+        if (overwrite && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { MediaMutator.writeRequest(appContext, images.map { it.uri }) }
+                .onSuccess {
+                    state = state.copy(
+                        consent = ConsentRequest(it, PendingAction.Resize(images, targetWidth, true))
+                    )
                 }
-                runCatching { ImageResizer.resize(appContext, item, width) }
-                    .onSuccess { success++ }
-                    .onFailure {
-                        failed++
-                        Log.w(TAG, "改分辨率失败: ${item.displayName}", it)
+                .onFailure { notify("无法发起修改请求：${it.message ?: "未知错误"}") }
+            return
+        }
+
+        viewModelScope.launch { performResize(images, targetWidth, overwrite) }
+    }
+
+    private suspend fun performResize(
+        items: List<MediaItem>,
+        targetWidth: Int,
+        overwrite: Boolean,
+    ) {
+        var success = 0
+        var failed = 0
+        var clamped = 0
+        var firstError: String? = null
+        var relocated = 0
+        var relocatedTo: String? = null
+
+        items.forEachIndexed { index, item ->
+            state = state.copy(busy = "正在修改分辨率 ${index + 1}/${items.size}")
+            // 一律不放大原图：图片比目标宽度还小时按原尺寸输出
+            val effective = if (item.width > 0) minOf(targetWidth, item.width) else targetWidth
+            runCatching { ImageResizer.resize(appContext, item, effective, overwrite) }
+                .onSuccess { outcome ->
+                    success++
+                    if (outcome.clamped) clamped++
+                    // 原目录（如 Download）不允许写图片，新文件被挪到了 Pictures 下
+                    outcome.relocatedTo?.let {
+                        relocated++
+                        if (relocatedTo == null) relocatedTo = it
                     }
-            }
-            state = state.copy(busy = null)
-            reload(clearSelection = true)
-            notify(
-                when {
-                    failed == 0 -> "已生成 $success 张新图片（文件名 + gai）"
-                    success == 0 -> "处理失败，请检查存储权限"
-                    else -> "完成 $success 张，失败 $failed 张"
                 }
-            )
+                .onFailure { error ->
+                    failed++
+                    if (firstError == null) {
+                        firstError = error.message?.takeIf { it.isNotBlank() }
+                            ?: error.javaClass.simpleName
+                    }
+                    Log.w(TAG, "改分辨率失败: ${item.displayName}", error)
+                }
+        }
+
+        state = state.copy(busy = null)
+        reload(clearSelection = true)
+        notify(buildResizeMessage(success, failed, clamped, overwrite, firstError, relocated, relocatedTo))
+    }
+
+    /**
+     * 结果提示。
+     *
+     * 以前失败一律说「请检查存储权限」，但真正的失败原因可能是内存不足、
+     * 图片损坏等，误导性很强。这里把第一条真实原因带出来。
+     */
+    private fun buildResizeMessage(
+        success: Int,
+        failed: Int,
+        clamped: Int,
+        overwrite: Boolean,
+        firstError: String?,
+        relocated: Int = 0,
+        relocatedTo: String? = null,
+    ): String {
+        val suffix = if (overwrite) "已覆盖原文件" else "已生成新文件（+gai）"
+        return when {
+            success == 0 && failed > 0 -> "处理失败：${firstError ?: "未知错误"}"
+            failed == 0 && success > 0 -> buildString {
+                append("完成 $success 张，")
+                append(suffix)
+                if (clamped > 0) append("，其中 $clamped 张原图更小未放大")
+                if (relocated > 0) append("，$relocated 张原目录不可写，已存到 $relocatedTo")
+            }
+
+            success > 0 -> "完成 $success 张，失败 $failed 张（${firstError ?: "未知错误"}）"
+            else -> "没有需要处理的文件"
         }
     }
 
@@ -286,6 +390,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         when (val action = consent.action) {
             is PendingAction.Delete -> viewModelScope.launch { performDelete(action.uris) }
             is PendingAction.Rename -> viewModelScope.launch { performRename(action.plan) }
+            is PendingAction.Resize -> viewModelScope.launch {
+                performResize(action.items, action.width, action.overwrite)
+            }
         }
     }
 

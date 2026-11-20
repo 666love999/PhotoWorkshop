@@ -2,6 +2,7 @@ package com.albumworkshop.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -9,9 +10,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,13 +46,16 @@ fun MediaThumbnail(
     modifier: Modifier = Modifier,
     corner: Dp = 12.dp,
     showDuration: Boolean = false,
+    /** 长按/多选模式下该文件是否被选中 */
+    selected: Boolean = false,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {},
 ) {
     val haptic = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(corner)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(corner))
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .combinedClickable(
                 onClick = onClick,
@@ -68,6 +74,36 @@ fun MediaThumbnail(
             contentScale = ContentScale.Crop,
             modifier = Modifier.matchParentSize(),
         )
+
+        if (selected) {
+            // 主色薄罩 + 描边 + 右上角勾，三层叠加保证任何缩略图上都看得清
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.26f))
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .border(3.dp, MaterialTheme.colorScheme.primary, shape)
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Check,
+                    contentDescription = "已选中",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+        }
 
         if (showDuration) {
             val duration = formatDuration(item.durationMs)

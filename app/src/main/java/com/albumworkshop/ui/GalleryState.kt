@@ -37,6 +37,13 @@ data class RenamePlan(val uri: Uri, val newName: String)
 sealed interface PendingAction {
     data class Delete(val uris: List<Uri>) : PendingAction
     data class Rename(val plan: List<RenamePlan>) : PendingAction
+
+    /** 覆盖原文件在 Android 11+ 需要系统授权，授权后再执行 */
+    data class Resize(
+        val items: List<MediaItem>,
+        val width: Int,
+        val overwrite: Boolean,
+    ) : PendingAction
 }
 
 data class ConsentRequest(val intentSender: IntentSender, val action: PendingAction)

@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.albumworkshop.data.formatFileSize
 import com.albumworkshop.ui.components.BusyOverlay
 import com.albumworkshop.ui.components.DeleteConfirmDialog
 import com.albumworkshop.ui.components.PermissionScreen
@@ -121,6 +122,12 @@ fun RootScreen(viewModel: GalleryViewModel) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        val itemSelection = state.selection as? Selection.ItemSelection
+        val selecting = itemSelection != null
+        val selectedIds = remember(itemSelection) {
+            itemSelection?.items?.mapTo(HashSet()) { it.id } ?: emptySet()
+        }
+
         val openAlbum = state.openAlbum
         if (openAlbum == null) {
             GalleryScreen(
@@ -130,6 +137,7 @@ fun RootScreen(viewModel: GalleryViewModel) {
                 onLongPressAlbum = viewModel::longPressAlbum,
                 onOpenItem = viewModel::openViewer,
                 onLongPressItem = viewModel::longPressItem,
+                onToggleItem = viewModel::toggleItemSelection,
                 onRefresh = viewModel::refresh,
             )
         } else {
@@ -137,9 +145,12 @@ fun RootScreen(viewModel: GalleryViewModel) {
                 album = openAlbum,
                 items = state.albumItems,
                 loading = state.loadingAlbum,
+                selecting = selecting,
+                selectedIds = selectedIds,
                 onBack = viewModel::closeAlbum,
                 onOpenItem = viewModel::openViewer,
                 onLongPressItem = viewModel::longPressItem,
+                onToggleItem = viewModel::toggleItemSelection,
                 onRefresh = viewModel::refresh,
             )
         }
@@ -156,19 +167,45 @@ fun RootScreen(viewModel: GalleryViewModel) {
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             lastSelection.value?.let { selection ->
+                val multi = selection.items.size > 1
+                val title = when {
+                    selection is Selection.AlbumSelection -> selection.title
+                    multi -> "已选 ${selection.items.size} 项"
+                    else -> selection.items.first().displayName
+                }
+                val subtitle = if (multi) {
+                    "共 ${selection.items.size} 个文件 · ${formatFileSize(selection.items.sumOf { it.size })}"
+                } else {
+                    val item = selection.items.first()
+                    buildString {
+                        append(item.resolutionText)
+                        if (item.size > 0L) {
+                            append("  ·  ")
+                            append(item.displaySize())
+                        }
+                        if (item.modifiedText.isNotEmpty()) {
+                            append("  ·  ")
+                            append(item.modifiedText)
+                        }
+                    }
+                }
+                val totalVisible = viewModel.visibleItems().size
+                val allSelected = selection is Selection.ItemSelection &&
+                    totalVisible > 0 && selection.items.size >= totalVisible
+
                 SelectionActionBar(
-                    title = selection.title,
-                    subtitle = if (selection.items.size > 1) {
-                        "${selection.items.size} 个项目，将批量处理"
-                    } else {
-                        val item = selection.items.first()
-                        "${item.displayName} · ${item.resolutionText}"
-                    },
+                    title = title,
+                    subtitle = subtitle,
                     showResize = selection.items.any { !it.isVideo },
                     onResize = viewModel::openResizeSheet,
                     onRename = viewModel::openRenameSheet,
                     onDelete = viewModel::requestDelete,
                     onDismiss = viewModel::dismissSelection,
+                    showSelectAll = selection is Selection.ItemSelection,
+                    allSelected = allSelected,
+                    onSelectAll = {
+                        if (allSelected) viewModel.dismissSelection() else viewModel.selectAllVisible()
+                    },
                 )
             }
         }
@@ -177,7 +214,7 @@ fun RootScreen(viewModel: GalleryViewModel) {
             is Sheet.Resize -> ResizeSheet(
                 targets = sheet.items,
                 onDismiss = viewModel::closeSheet,
-                onConfirm = viewModel::executeResize,
+                onConfirm = { width, overwrite -> viewModel.executeResize(width, overwrite) },
             )
 
             is Sheet.Rename -> {
@@ -222,6 +259,7 @@ fun RootScreen(viewModel: GalleryViewModel) {
                 items = viewer.items,
                 initialIndex = viewer.index,
                 onClose = viewModel::closeViewer,
+                onLongPress = viewModel::longPressInViewer,
             )
         }
     }

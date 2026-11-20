@@ -38,21 +38,60 @@ object MediaMutator {
         var success = 0
         var failed = 0
         uris.forEach { uri ->
-            try {
-                val count = context.contentResolver.delete(uri, null, null)
-                if (count > 0) success++ else failed++
+            // 部分 ROM（MIUI 等）删成功仍返回 0；而系统授权弹窗本身往往已经把文件删掉了，
+            // 再删一次会抛「Unknown URL」。所以删除结果只当参考，最终以「记录还在不在」为准。
+            val removed = try {
+                context.contentResolver.delete(uri, null, null) > 0
             } catch (e: SecurityException) {
                 val sender = recoverableSender(e)
                 if (sender != null) throw ConsentRequired(sender)
                 Log.w(TAG, "删除失败: $uri", e)
-                failed++
+                false
             } catch (e: Exception) {
                 Log.w(TAG, "删除异常: $uri", e)
-                failed++
+                false
             }
+            if (removed || !exists(context, uri)) success++ else failed++
         }
         success to failed
     }
+
+    /**
+     * 删除之后确认这条记录是否还在。
+     *
+     * 「查不到」= 已经删掉了；进了回收站（Android 11+ 的 is_trashed）也算删除，
+     * 相册里已经看不到，系统会在 30 天内清理。查询本身抛 SecurityException
+     * 说明记录还在但没权限，其余异常（如 URI 已失效）按已删除处理。
+     */
+    private fun exists(context: Context, uri: Uri): Boolean {
+        return try {
+            val hasTrash = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+            val projection = if (hasTrash) {
+                arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.IS_TRASHED)
+            } else {
+                arrayOf(MediaStore.MediaColumns._ID)
+            }
+            var found = false
+            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                found = if (cursor.moveToFirst()) {
+                    val index = if (hasTrash) {
+                        cursor.getColumnIndex(MediaStore.MediaColumns.IS_TRASHED)
+                    } else {
+                        -1
+                    }
+                    index < 0 || cursor.getInt(index) == 0
+                } else {
+                    false
+                }
+            }
+            found
+        } catch (e: SecurityException) {
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
 
     /** 直接改 DISPLAY_NAME，文件本体不搬家（等价于原地重命名，覆盖原名） */
     suspend fun rename(context: Context, plan: List<Pair<Uri, String>>): Pair<Int, Int> =
